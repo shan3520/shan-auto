@@ -36,11 +36,12 @@ ideas/inbox.md
    ↓  (brain: an LLM call, returns JSON)
 epics → milestones → micro-tasks           stored in SQLite
    ↓  (allocator picks today's batch, weighted across repos)
-   ↓  (router: complex → agy, simple → opencode)
-agent writes code in the repo
+   ↓  (senior: agy writes a brief for the task)
+agent writes code in the repo           (intern: opencode, in both size pools)
    ↓
 THE GATE  ── files changed? protected paths? scope cap? diff big enough?
           ── no dead exports? repo verify_cmd passes?
+          ── senior reads the diff: are these tests capable of failing?
    ↓ pass                      ↓ fail
 commit + push            scoped rollback, retry or park
 ```
@@ -54,13 +55,13 @@ then parsed and schema-validated. This is deliberate and should stay true.
 - Node 22 + TypeScript, ESM, run via `tsx` (no build step)
 - `node:sqlite` (built-in) for the ledger — **not** better-sqlite3, deliberately
 - `execa` (subprocesses), `simple-git`, `zod` (validation), `yaml` (config)
-- `vitest` — 719 tests green across 52 files (2026-08-11)
+- `vitest` — 1,896 tests across 80 files (2026-10-05)
 - `playwright` present but the browser channel is disabled
 
 ### Layout
 
 ```
-config/     repos.yaml (allowlist), system.yaml (pacing), drivers.yaml (tools), prompts/
+config/     repos.yaml (allowlist, gitignored; see repos.yaml.example), system.yaml (targets, limits), drivers.yaml (tools), prompts/
 ideas/      inbox.md ← human input, archive/
 data/       shanauto.db, reports/, runs/*.jsonl, artifacts/ (raw model responses)
 state/      KILLSWITCH, run.lock (empty unless paused or mid-run)
@@ -69,49 +70,53 @@ src/
   core/     planner, allocator, router, executor, verifier, reporter, resolver, prune, deadexports, …
   ledger.ts git.ts config.ts util.ts schemas.ts logger.ts index.ts (CLI)
 scripts/    triage.ts, agy-access.ps1, install-scheduler.ps1, setup-restricted-account.ps1, probe-*.ts
-docs/       MANUAL.md (how to operate), DECISIONS.md (security decisions)
+docs/       MANUAL.md (how to operate), DECISIONS.md (why it is built this way, dated), CONTEXT.md (this file)
 ```
 
 ### The drivers
 
 | Driver | Role | What it is | Notes |
 |---|---|---|---|
-| `agy` | planner (`brain.active`) + complex tasks | Antigravity CLI, `%LOCALAPPDATA%\agy\bin\agy.exe` | **not** the IDE launcher; `sandbox:false`, protection is the allow-list (DECISIONS.md) |
-| `opencode` | simple tasks; registered fallback brain | `opencode run` CLI, Google AI Studio | cheap jobs, third quota |
-| `copilot` | complex tasks | GitHub Copilot CLI | third independent quota |
+| `agy` | **senior**: plans (`brain.active`), briefs every task, reviews before push | Antigravity CLI, `%LOCALAPPDATA%\agy\bin\agy.exe` | **not** the IDE launcher; writes no code under the shipped routing; `sandbox:false`, protection is the allow-list (DECISIONS.md) |
+| `opencode` | **intern**: implements every task; registered fallback brain | `opencode run` CLI, Google AI Studio | in both size pools; its own quota |
 | `antigravity` | handoff to a human | Antigravity IDE launcher | `mode: handoff`, not scriptable |
 
 The chat channel (`chatgpt`) is registered but disabled.
 
-Routing is by job size, never by project: complex → `agy`/`copilot`, simple →
-`opencode` (default). Each driver authenticates against a **different quota**,
-which is why there are several — quota, not capability, is the ceiling. Any
-driver is swapped via one line in `config/drivers.yaml`.
+Routing is by role, then by job size, never by project. agy plans, briefs and
+reviews; opencode writes all of the code — both size pools point at it, so the
+reviewer is never marking its own work. A third agent, `copilot`, was removed on
+2026-08-15. The two remaining authenticate against **different quotas**, and quota,
+not capability, is the ceiling. Any driver is swapped via one line in
+`config/drivers.yaml`.
 
 ---
 
-## 3. Current state (2026-08-11)
+## 3. Current state (2026-10-05)
 
 - **Durable memory is built** (`docs/FEATURE-1-MEMORY.md`). It ingests git
   history, `docs/DECISIONS.md` and run outcomes; compresses closed periods into
   rollups; answers questions via `sa ask` (deterministic retrieval plus exactly
   one provider call); exports to JSONL. Verified at 11,000 memories across three
-  synthetic years. `data/memory/` holds the ingested history.
-- **The system is LIVE and scheduled.** Four tasks are registered and enabled in
-  Windows Task Scheduler: plan 06:30, run 07:00, report 19:00, prune 19:15 (prune
-  after report, so a day is always summarised before any of its raw material can
-  age out). No killswitch is set — `state/` holds only the transient run.lock
-  while a run is in flight.
-- **One enabled repo: `example-api`** at `D:/repos/example-api` (Python/FastAPI +
-  Next.js); its gate is `compileall`, then `pytest`. ShanAuto itself is **not**
-  a repo and must not be — the machine is not the work (config/repos.yaml).
-- **Brain: `agy`** on `gemini-3.1-pro-high` (fallback `gemini-3.6-flash-high`).
-  Complex tasks → `agy`/`copilot`, simple → `opencode` (config/drivers.yaml).
-- **719 tests green across 52 files; `npm run typecheck` clean.**
-- **Audit-fix program in progress.** The 2026-08-10 deep audit
-  (`shanauto-deep-audit-report.html`, untracked) is being worked part by part:
-  parts 1–3 committed (see `docs/audit-fixes/`), parts 4–7 pending. The system
-  is live while fixes land; `sa stop` (killswitch) pauses it if that is a risk.
+  synthetic years. `data/memory/` holds the ingested history; it is gitignored,
+  because it names the operator's own projects, so it is backed up by hand.
+- **Run by hand.** Scheduling is optional: `scripts/install-scheduler.ps1`
+  registers four Windows Task Scheduler jobs — plan 06:30, run 07:00, report
+  19:00, prune 19:15 (prune after report, so a day is always summarised before
+  any of its raw material can age out) — and the operator currently runs without
+  them. No killswitch is set — `state/` holds only the transient run.lock while a
+  run is in flight.
+- **Several projects are configured**, Python and Go, in `config/repos.yaml` —
+  gitignored, because it names paths on the operator's disk;
+  `config/repos.yaml.example` shows the shape. ShanAuto itself is **not** a repo
+  and must not be — the machine is not the work.
+- **Senior: `agy`** on `gemini-3.1-pro-high` (fallback `gemini-3.6-flash-high`)
+  plans, briefs and reviews. **Intern: `opencode`** on `opencode/big-pickle`
+  implements every task (config/drivers.yaml).
+- **1,896 tests across 80 files; `npm run typecheck` clean.**
+- **The 2026-08-10 deep audit is closed.** All seven fix parts landed (see
+  `docs/audit-fixes/`). One finding, PERF-5, is deliberately deferred with a
+  measured trigger for revisiting it.
 
 ---
 

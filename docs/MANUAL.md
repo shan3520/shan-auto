@@ -23,8 +23,9 @@ Your daily involvement is about **2 minutes in, 5 minutes out**.
 
 ## 2. On and off
 
-The system has **two independent switches**. Both must be on for it to work, which
-is deliberate — one stops the timer, the other stops execution.
+The system has **two independent switches**: the killswitch stops execution, and
+the Windows schedule decides whether anything starts on its own. The schedule is
+optional — if you run it by hand, the killswitch is the only one you need.
 
 ### Check which state you are in
 
@@ -47,7 +48,8 @@ powershell -c "Get-ScheduledTask -TaskName 'ShanAuto*' | Disable-ScheduledTask"
 ```
 
 The first sets `state/KILLSWITCH`, so even a manual `npm run run` refuses. The
-second stops the scheduled jobs firing at all. Use both — either alone leaves a gap.
+second stops the scheduled jobs firing at all. If you use the schedule, use both —
+either alone leaves a gap.
 
 A run already in flight stops at its next task boundary, never mid-commit.
 
@@ -79,12 +81,15 @@ Nothing is lost while off. The ledger, commits and history are untouched.
 |-------|--------------|-----|
 | any   | Add a paragraph to `ideas/inbox.md` | **you, ~2 min** |
 | 06:30 | Shapes new ideas, tops up the backlog | auto |
-| 07:00 | Works the day's tasks, gated and paced | auto |
+| 07:00 | Works the day's tasks, gated | auto |
 | 19:00 | Writes `data/reports/<date>.md` | auto |
 | 19:05 | Skim the report, glance at failures | **you, ~5 min** |
 
-**If `ideas/inbox.md` is empty or missing, 06:30 and 07:00 do nothing.** That is
-the single most common reason for an idle day.
+The timed rows assume the schedule is installed (`scripts/install-scheduler.ps1`).
+Without it, run `npm run plan` and `npm run run` yourself.
+
+**If `ideas/inbox.md` is empty or missing, planning and running do nothing.** That
+is the single most common reason for an idle day.
 
 ### Writing an idea
 
@@ -133,9 +138,9 @@ Everything is `npm run sa -- <command>`, with shortcuts for the common ones.
 2026-08-27, and the old behaviour was the wrong way round: `--github` used to be
 opt-in, so a project you forgot to pass it to was built, tested and committed
 into a folder with nowhere to send any of it. Two projects reached 8 and 7
-commits of finished work that way before anyone noticed. The first line of this
-program's `package.json` calls it an *"Autonomous daily GitHub contribution
-system"*; a project born with nothing to contribute to is that failing quietly.
+commits of finished work that way before anyone noticed. This system exists to
+push what survives the gate; a project born with nowhere to push is that failing
+quietly.
 
 The repository is **private**. Private repositories do not appear on your public
 profile, and their commits only count towards your contribution graph if you
@@ -291,7 +296,8 @@ Keeping memory fed and compressed:
 | `sa memory:import` | restore it | free |
 
 **Export regularly.** Memory living only in `data/shanauto.db` is one corrupted
-file from zero. The JSONL is one record per line, so even a damaged file
+file from zero. `data/memory/` is gitignored — it names your own projects — so an
+export is a file on this disk, not a commit: copy it somewhere else as well. The JSONL is one record per line, so even a damaged file
 restores everything up to the damage — verified by deleting every memory row and
 restoring from it.
 
@@ -449,7 +455,7 @@ The worker's own message never says which command; it prints a literal
 `command(<target>)` placeholder. ShanAuto recovers the name from the worker's
 transcript, which is best-effort: if it cannot, it says so rather than guessing.
 
-### `config/system.yaml` — pacing and thresholds
+### `config/system.yaml` — targets and thresholds
 
 | Key | Default | Meaning |
 |---|---|---|
@@ -461,9 +467,12 @@ transcript, which is best-effort: if it cannot, it says so rather than guessing.
 | `limits.min_insertions` | 3 | below this a diff is "trivial" |
 | `limits.forbid_dead_exports` | true | reject exports nothing calls |
 | `backlog.min_ready` | 30 | below this, auto-plan more |
-| `brain.model` | gemini-3.1-pro-high | the planner |
+| `brain.model` | google/gemini-3.1-flash-lite | fallback only — see below |
 
-**Note:** the shipped `system.yaml` has no `brain` block — the planner defaults to `opencode` on `gemini-3.1-flash-lite` unless you add it. The table above documents the values this install runs with after the 2026-08-07 brain migration.
+**Note:** `system.yaml`'s `brain.model` is only a default. The model actually
+used is the one on the active brain's entry in `config/drivers.yaml`, and both
+shipped entries set one — so the planner runs on **agy, `gemini-3.1-pro-high`**.
+`brain.max_repair_attempts` here *is* always used.
 
 `work_hours` does **not** handle a window crossing midnight. Keep `end` later
 than `start`, max `"23:59"`.
@@ -487,22 +496,29 @@ Swapping a tool is one line. `complex_agents` / `simple_agents` split work by si
 Legacy singular keys `complex_agent` / `simple_agent` are still accepted for
 back-compat but the lists are preferred.
 
-Two coding agents are registered, on **separate quotas** — which is the point,
-since requests-per-day is what limits this system, not capability.
+Two coding agents are registered, on **separate quotas**, and they split the work
+by role rather than size:
 
 | Agent | Signs in via | Role |
 |---|---|---|
-| `agy` | Antigravity suite | complex (heavy edits, multi-file) |
-| `opencode` | Google AI Studio key | simple (small edits, config, docs) |
+| `agy` | Antigravity suite | **senior** — plans, writes each task's brief, reviews the diff before push. Writes no code. |
+| `opencode` | Google AI Studio key | **intern** — implements every task, in both size pools |
+
+Both pools point at opencode on purpose: a reviewer marking its own homework ships
+whatever it wrote. `brief_for` and `qa_for` in `drivers.yaml` list whose work gets
+a brief and a review. To have agy write complex work again, add it to
+`complex_agents`.
 
 GitHub Copilot was a third agent until 2026-08-15. Its quota ran out and would
 not reset until 2026-09-01, and an exhausted agent is worse than an absent one:
 work still routed to it and came back failed. It was removed rather than left
 registered. `config/drivers.yaml` says how to bring it back.
 
-**Each side of that split is now one agent deep.** If agy is out for the day, no
-complex work runs at all — there is nobody to hand it to. Nothing is lost; those
-jobs sit untouched and wait for tomorrow. `npm run sa -- route` shows which agent
+**Each role is one agent deep.** If agy is out, work keeps going but degrades:
+tasks dispatch on the planner's instruction instead of a brief and commit on the
+gate's verdict alone, with no review, and new ideas cannot be planned. If opencode
+is out, nothing can be implemented and the run ends. Nothing is lost either way;
+the jobs wait. `npm run sa -- route` shows which agent
 each waiting job would get, without running anything, and the day's report names
 any agent that went out.
 
@@ -574,14 +590,11 @@ Check in this order:
 
 ### Every task suddenly fails
 
-Almost always a **red test suite**, because `verify_cmd` runs `npm test` and a
-broken suite fails every task's gate, not just its own.
+Almost always a **red test suite**. Every task's gate runs the project's own
+`verify_cmd`, so a broken suite fails all of them, not just the one that broke it.
 
-```bash
-npm run typecheck && npm test
-```
-
-Fix the suite first; everything else follows.
+Run that project's `verify_cmd` from `config/repos.yaml` by hand. Fix the suite
+first; everything else follows.
 
 ### Commits land but the graph stays grey
 
@@ -596,7 +609,7 @@ git log --format='%ae' | sort | uniq -c
 ## 7. Adding a new project
 
 1. Add it to `config/repos.yaml` with a **strict** `verify_cmd`.
-2. `npm run doctor` — confirms it is a git repo with a remote.
+2. `npm run doctor` — confirms it is a git repo, and says so if it has no remote to push to.
 3. Write an idea in `ideas/inbox.md` with `repo: <that id>`.
 4. `npm run plan`
 5. `npm run sa -- run --dry` — read the tasks before letting it loose.
@@ -637,8 +650,10 @@ Worth knowing before they surprise you.
 commit. Free tiers are request-per-day limited; when one is exhausted the run
 stops cleanly and says so.
 
-**agy and opencode use different quotas.** If one is exhausted, switch
-`complex_agent` / `simple_agent` in `drivers.yaml` to the other.
+**agy and opencode use different quotas.** opencode is in both pools, so if it is
+exhausted nothing is implemented until it resets — or point `complex_agents` /
+`simple_agents` at `agy` for the day. If agy is exhausted, work continues without
+briefs or review.
 
 **agy has shell access with no sandbox** (see `docs/DECISIONS.md`). Its protection
 is a default-deny allow-list. `npm run agy:nuke` revokes it instantly.
@@ -659,11 +674,11 @@ package nothing imported and it passed. Skim `package.json` diffs.
 ## 10. Files
 
 ```
-config/     repos.yaml, system.yaml, drivers.yaml, prompts/
+config/     repos.yaml (yours, gitignored) + repos.yaml.example, system.yaml, drivers.yaml, prompts/
 ideas/      inbox.md ← you write here, archive/
-data/       shanauto.db (the ledger), reports/, runs/, artifacts/
+data/       shanauto.db (the ledger), memory/, reports/, runs/, journal/, artifacts/ — none of it committed
 state/      KILLSWITCH, run.lock
-docs/       MANUAL.md, DECISIONS.md
+docs/       MANUAL.md, CONTEXT.md, DECISIONS.md
 scripts/    triage, agy-access, install-scheduler, probes
 src/        drivers/ (swap point), core/, ledger, git, index
 ```

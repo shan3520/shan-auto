@@ -13,13 +13,14 @@ Runs unattended on a normal Windows PC. No paid services, no local LLM, no Docke
 ### What it is
 
 An orchestrator for AI coding agents that you point at your own projects. You
-write what you want in plain English in `ideas/inbox.md`. A planning model breaks
-it into small, complete tasks and stores them in a local SQLite ledger. Each task
-goes to a coding agent — [agy](https://antigravity.google) or
-[opencode](https://opencode.ai), chosen by how big the job is — and the result is
-committed **only** if the target repo's own typecheck and test suite pass. Work
-that fails is rolled back without touching anything you had in progress, and
-retried or set aside with the reason written down.
+write what you want in plain English in `ideas/inbox.md`. A senior model,
+[agy](https://antigravity.google), plans it into small, complete tasks stored in a
+local SQLite ledger, and writes a brief for each one. A cheaper model,
+[opencode](https://opencode.ai), implements the brief. The result is committed
+**only** if the target repo's own typecheck and test suite pass *and* the senior,
+reading the diff, agrees those tests are capable of failing. Work that fails is
+rolled back without touching anything you had in progress, and retried or set
+aside with the reason written down.
 
 It does not write code itself, and it does not trust the code that is written for
 it. The planner, the router and the agents are all swappable; the gate is not.
@@ -30,8 +31,9 @@ it. The planner, the router and the agents are all swappable; the gate is not.
 - **Node.js 22.5 or later.** It uses the built-in `node:sqlite`.
 - **git**, and optionally the [GitHub CLI](https://cli.github.com) (`gh`) for
   creating repos and checking that pushed commits were counted.
-- **At least one coding agent CLI:** `agy` or `opencode`. Free tiers are enough
-  for modest volume — see [Free-tier reality](#free-tier-reality--read-this-before-raising-daily_target).
+- **Both coding agent CLIs, as shipped:** `agy` plans, briefs and reviews;
+  `opencode` writes the code. Either can be swapped in `config/drivers.yaml`.
+  Free tiers are enough for modest volume — see [Free-tier reality](#free-tier-reality--read-this-before-raising-daily_target).
 
 ### Status
 
@@ -56,7 +58,9 @@ ideas/inbox.md ──► brain (agy) ──► epics ──► milestones ──
                               ▼
                        allocator picks today's batch (weighted across repos)
                               ▼
-                       agent (agy/opencode) implements ONE task
+                       senior (agy) writes a brief for the task
+                              ▼
+                       intern (opencode) implements ONE task from it
                               ▼
                        ┌──── THE GATE ────────────────────────┐
                        │ • files changed > 0                  │
@@ -65,6 +69,7 @@ ideas/inbox.md ──► brain (agy) ──► epics ──► milestones ──
                        │ • insertions >= minimum              │
                        │ • verify_cmd exits 0                 │
                        │     (typecheck AND tests)            │
+                       │ • senior (agy) reviews the diff      │
                        └──────────────────────────────────────┘
                           pass ──► commit + push      fail ──► git rollback, retry or park
 ```
@@ -245,36 +250,44 @@ Same for `chat.active`, `agents.registry`, and `routing`. No other code changes.
 
 ### How work is split between agents
 
-Heavy work goes to `agy`, small edits to `opencode`. A task is **complex** if any
-one of these holds — configurable under `routing.complexity`:
+By role first. agy is the **senior**: it plans each milestone, writes an XML
+brief for every task, and reviews the change before it is pushed. It does not
+write code. opencode is the **intern**: it implements the brief and nothing else.
+
+The point is the review. A reviewer marking its own homework ships whatever it
+wrote, so the model that checks the work must not be the one that did it. The
+split also spends agy's quota entirely on planning, briefing and review — the
+steps a weaker model cannot do. So both size pools point at opencode:
+
+```yaml
+routing:
+  complex_agents: [opencode]
+  simple_agents: [opencode]
+  brief_for: [opencode]   # these agents work from the senior's brief
+  qa_for: [opencode]      # these agents' work is reviewed before commit
+```
+
+The size split still decides which pool a task draws from. A task is **complex**
+if any one of these holds — configurable under `routing.complexity`:
 
 - its kind is `feature`, `refactor` or `bugfix`
 - it estimates 25+ lines
 - it touches 2+ files
 
-Preview the split without running anything:
+It only matters once a pool holds a second agent. To have agy write complex work
+again, add it to `complex_agents`; its driver, permissions and tests are all still
+in place. Preview which agent gets each waiting task, without running anything:
 
 ```bash
 npm run sa -- route
 ```
 
-```
-COMPLEX  agy         Implement executeWithRetry helper       complex: kind=feature
-SIMPLE   opencode    Create data/reports directory           simple: config, ~5 lines
-```
-
-**To run agy alone**, set `simple_agents: [agy]` in `config/drivers.yaml`. One line,
-nothing else changes. Two reasons not to, though:
-
-1. **Quota independence.** agy and opencode authenticate against different
-   quotas. Running out on one currently costs you nothing; on agy alone it ends
-   the day.
-2. **agy cannot run shell commands headlessly** (see Trap 2 below) until you
-   allow-list them, whereas opencode is configured with `bash: allow`. So for any
-   task that needs to install a dependency or run a test, opencode is presently
-   the *more* capable of the two.
-
-Once you have allow-listed commands for agy, dropping opencode becomes reasonable.
+**When one is unavailable.** If agy is out, work keeps going but degrades: tasks
+are dispatched on the planner's instruction instead of a brief and committed on
+the gate's verdict alone, with no review — the log says so for each. New ideas
+cannot be planned until it is back. If opencode is out, nothing can be
+implemented, since it is in both pools: the run ends and the tasks wait for the
+next one.
 
 ---
 
