@@ -3,7 +3,8 @@ import { join, resolve, sep } from 'node:path';
 import { p } from '../config.js';
 import { log } from '../logger.js';
 import { today } from '../util.js';
-import type { RetentionConfig } from '../schemas.js';
+import type { Repo, RetentionConfig } from '../schemas.js';
+import { dropStashBySha, rollbackStashes } from '../git.js';
 
 /**
  * Retention for the three directories that grow forever.
@@ -146,7 +147,8 @@ function cutoffDay(now: Date, days: number): string | null {
 const DATED = /^(\d{4}-\d{2}-\d{2})\.(?:md|jsonl)$/;
 
 export function prune(
-  retention: RetentionConfig,
+  // The three file windows only: the stash window is pruneRollbackStashes'.
+  retention: Pick<RetentionConfig, 'journal_days' | 'artifact_days' | 'run_log_days'>,
   opts: { dryRun?: boolean; now?: Date } = {},
   dataDir = p('data'),
 ): PruneResult {
@@ -234,6 +236,104 @@ export function prune(
 
   if (result.removed.length && !dryRun) {
     log.debug(`pruned ${result.removed.length} entr(ies), ${formatBytes(result.bytes)}`);
+  }
+  return result;
+}
+
+export interface StashPruneEntry {
+  repo: string;
+  sha: string;
+  label: string;
+  /** Local calendar day the rollback was taken. */
+  day: string;
+}
+
+export interface StashPruneResult {
+  /** False when the window is 0 — the default, as everywhere else here. */
+  enabled: boolean;
+  dryRun: boolean;
+  removed: StashPruneEntry[];
+  /** Rollback stashes inside the window, or no longer there to drop. */
+  kept: number;
+  errors: string[];
+}
+
+/**
+ * Let go of rollback stashes older than the window, in every allowlisted repo.
+ *
+ * `rollback` stashes an agent's rejected work rather than deleting it, which is
+ * right — it is the only place that work survives — and nothing ever gave any of
+ * it back. 43 piled up in one project in three weeks, and when they were cleared
+ * by hand on 2026-08-27, six more had arrived within three hours. A
+ * rejected attempt is retried at once, so by the time one is weeks old the task
+ * has long since landed or been dropped, and the stash is a record nobody reads.
+ *
+ * The same three rules as the file sweep above, plus two of its own:
+ *
+ * 1. A window of 0 keeps everything, and 0 is the default.
+ * 2. Only `shanauto-rollback` stashes, matched exactly — never an autostash,
+ *    which can hold the owner's own work, and never the owner's own stashes.
+ *    Only repos in the allowlist are read at all.
+ * 3. Nothing throws. A repo that cannot be read is reported and skipped.
+ * 4. Every drop is by SHA, re-resolved immediately before it — see
+ *    `dropStashBySha` for why a position read earlier is not safe to use.
+ * 5. A dropped stash is reported with its SHA. That SHA is the way back:
+ *    `git stash apply <sha>` works until git's garbage collection removes the
+ *    unreachable commit, typically a further two weeks.
+ */
+export async function pruneRollbackStashes(
+  repos: Repo[],
+  days: number,
+  opts: { dryRun?: boolean; now?: Date } = {},
+): Promise<StashPruneResult> {
+  const dryRun = opts.dryRun ?? false;
+  const now = opts.now ?? new Date();
+  const result: StashPruneResult = { enabled: days > 0, dryRun, removed: [], kept: 0, errors: [] };
+  if (!result.enabled) return result;
+
+  const cutoff = cutoffDay(now, days);
+  if (cutoff === null) {
+    result.errors.push(
+      `rollback stashes: keeping everything — ${days} days is not a retention window this can work with`,
+    );
+    return result;
+  }
+  const openDay = today(now);
+
+  for (const repo of repos) {
+    let stashes;
+    try {
+      stashes = await rollbackStashes(repo);
+    } catch (e) {
+      result.errors.push(`${repo.id}: could not read its stashes — ${(e as Error).message}`);
+      continue;
+    }
+
+    for (const s of stashes) {
+      const day = today(s.created);
+      // Today is never old, the same rule the file sweep applies.
+      if (day >= openDay || day >= cutoff) {
+        result.kept++;
+        continue;
+      }
+      if (!dryRun) {
+        try {
+          if (!(await dropStashBySha(repo, s.sha))) {
+            // Gone already, or no longer where we can prove it is: leave it.
+            result.kept++;
+            continue;
+          }
+        } catch (e) {
+          result.errors.push(`${repo.id}: ${s.sha.slice(0, 8)} — ${(e as Error).message}`);
+          continue;
+        }
+      }
+      result.removed.push({ repo: repo.id, sha: s.sha, label: s.label, day });
+    }
+  }
+
+  if (result.removed.length && !dryRun) {
+    log.debug(`pruned ${result.removed.length} rollback stash(es)`);
   }
   return result;
 }

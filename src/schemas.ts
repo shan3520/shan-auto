@@ -72,6 +72,8 @@ export const RetentionSchema = z.object({
   journal_days: z.number().int().nonnegative().default(0),
   artifact_days: z.number().int().nonnegative().default(0),
   run_log_days: z.number().int().nonnegative().default(0),
+  /** `shanauto-rollback` stashes in each allowlisted project. See prune.ts. */
+  rollback_stash_days: z.number().int().nonnegative().default(0),
 });
 export type RetentionConfig = z.infer<typeof RetentionSchema>;
 

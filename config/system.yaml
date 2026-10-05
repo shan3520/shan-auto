@@ -114,3 +114,13 @@ retention:
   journal_days: 90        # data/journal/YYYY-MM-DD.md — ingested into memory first
   artifact_days: 30       # data/artifacts/<runId>/ — raw agent + brain output, the bulk of it
   run_log_days: 90        # data/runs/YYYY-MM-DD.jsonl — structured log lines
+  #
+  # Not in data/ at all: git stashes inside your PROJECT repos. Every gate
+  # rejection stashes the agent's work before reverting it, and nothing gave
+  # any back — 43 in one project in three weeks. Only ShanAuto's own
+  # `shanauto-rollback` stashes are touched; an autostash (which can hold YOUR
+  # unsaved work) and your own stashes never are. A rejected attempt is retried
+  # at once, so a two-week-old one has long been superseded. Each dropped stash
+  # is printed with its SHA, and `git stash apply <sha>` brings it back until
+  # git's garbage collection runs, typically two more weeks.
+  rollback_stash_days: 14

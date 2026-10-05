@@ -213,6 +213,93 @@ export async function shanautoStashes(repo: Repo): Promise<StashEntry[]> {
   return out;
 }
 
+/**
+ * The label `rollback` writes, anchored at both ends.
+ *
+ * `shanautoStashes` matches loosely because it only REPORTS. This decides what is
+ * DELETED, so it matches exactly what rollback writes and nothing else:
+ * `shanauto-rollback <ISO>`, with the ` — <task and verdict>` suffix O24 added on
+ * 2026-08-31. Both shapes are in the wild — the stashes taken before O24 have no
+ * suffix — and both must be recognised.
+ *
+ * Two things it must never match:
+ *
+ * - `shanauto-autostash-*`. ensureClean takes that from a dirty tree BEFORE a
+ *   task runs, so it can hold the owner's own unsaved work — measured in
+ *   example-api, two of the owner's scripts swept up on 2026-08-12 and still
+ *   sitting there. Age says nothing about whether that is safe to lose.
+ * - An owner's own `git stash push -m "..."` that happens to mention the word.
+ *   Anchoring is the whole difference between "ours" and "contains our name".
+ */
+const ROLLBACK_LABEL =
+  /^shanauto-rollback (\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)(?: — .*)?$/;
+
+export interface RollbackStash {
+  /** Position when read. NEVER dropped by this alone — see dropStashBySha. */
+  ref: string;
+  /** The stash commit: the identity a drop is checked against. */
+  sha: string;
+  label: string;
+  /** When rollback took it, from the ISO time it writes into the label. */
+  created: Date;
+}
+
+/**
+ * ShanAuto's rollback stashes in this repo, and only those.
+ *
+ * Throws when the list cannot be read, unlike `shanautoStashes`: a report can
+ * shrug at an unreadable repo, but a sweep that read nothing must say so rather
+ * than report a clean pass it never made.
+ */
+export async function rollbackStashes(repo: Repo): Promise<RollbackStash[]> {
+  // NUL-separated: a stash message is free text and can contain anything else.
+  const raw = await g(repo).raw(['stash', 'list', '--format=%gd%x00%H%x00%gs']);
+  const out: RollbackStash[] = [];
+  for (const line of raw.split('\n')) {
+    const [ref, sha, subject] = line.split('\0');
+    if (!ref || !sha || !subject) continue;
+    const label = subject.replace(/^on\s+[^:]+:\s*/i, '').trim();
+    const m = ROLLBACK_LABEL.exec(label);
+    if (!m) continue;
+    const created = new Date(m[1]!);
+    // A label that names no real time is not evidence of age.
+    if (Number.isNaN(created.getTime())) continue;
+    out.push({ ref: ref.trim(), sha: sha.trim(), label, created });
+  }
+  return out;
+}
+
+/**
+ * Drop one stash by IDENTITY, never by a position read earlier.
+ *
+ * `git stash drop` takes a position, and positions move: every stash pushed
+ * shifts every older one down by one, and a run in flight pushes one for each
+ * rejected task. A position read at the start of a sweep can point at a
+ * different stash by the time it is used — and the one it slides onto is the
+ * NEWER neighbour, which may be an autostash holding the owner's own work.
+ *
+ * So the position is looked up from the SHA immediately before the drop, then
+ * confirmed with rev-parse, and a stash that cannot be found is left alone and
+ * reported as gone rather than guessed at. The `prune` command also refuses to
+ * sweep while a run holds the lock, which closes the last window.
+ *
+ * Returns false when the stash is no longer there.
+ */
+export async function dropStashBySha(repo: Repo, sha: string): Promise<boolean> {
+  const git = g(repo);
+  const raw = await git.raw(['stash', 'list', '--format=%gd%x00%H']);
+  const ref = raw
+    .split('\n')
+    .map((l) => l.split('\0'))
+    .find(([, h]) => h?.trim() === sha)?.[0]
+    ?.trim();
+  if (!ref) return false;
+  const now = (await git.raw(['rev-parse', ref])).trim();
+  if (now !== sha) return false;
+  await git.raw(['stash', 'drop', ref]);
+  return true;
+}
+
 export interface StashSummary {
   repo: string;
   path: string;

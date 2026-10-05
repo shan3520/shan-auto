@@ -17,8 +17,8 @@ const root = mkdtempSync(join(tmpdir(), 'sa-prune-'));
 const NOW = new Date(2026, 7, 8, 9, 0);
 const daysAgo = (n: number, h = 20) => new Date(2026, 7, 8 - n, h, 0);
 
-const KEEP_ALL: RetentionConfig = { journal_days: 0, artifact_days: 0, run_log_days: 0 };
-const WEEK: RetentionConfig = { journal_days: 7, artifact_days: 7, run_log_days: 7 };
+const KEEP_ALL: RetentionConfig = { journal_days: 0, artifact_days: 0, run_log_days: 0, rollback_stash_days: 0 };
+const WEEK: RetentionConfig = { journal_days: 7, artifact_days: 7, run_log_days: 7, rollback_stash_days: 0 };
 
 function put(rel: string, body: string, mtime: Date): string {
   const path = join(root, rel);

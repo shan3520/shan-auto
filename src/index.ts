@@ -55,6 +55,24 @@ function isProcessAlive(pid: number): boolean {
   }
 }
 
+/**
+ * Who holds run.lock right now: a live pid, -1 if the lock exists but cannot be
+ * read, or null if no live run holds it.
+ *
+ * For housekeeping that must not race a run. Unreadable counts as HELD — the
+ * one answer here that could cost data is "nobody", so it is never the guess.
+ */
+function liveLockHolder(): number | null {
+  try {
+    if (!existsSync(LOCK())) return null;
+    const pid = Number(readFileSync(LOCK(), 'utf8').trim());
+    if (!Number.isInteger(pid) || pid <= 0) return -1;
+    return isProcessAlive(pid) ? pid : null;
+  } catch {
+    return -1;
+  }
+}
+
 /* ------------------------------------------------------------------ doctor */
 
 async function doctor() {
@@ -1641,27 +1659,68 @@ async function main() {
        * see the note there.
        */
       const cfg = loadConfig();
-      const { prune, formatBytes } = await import('./core/prune.js');
+      const { prune, pruneRollbackStashes, formatBytes } = await import('./core/prune.js');
       const r = cfg.system.retention;
       const dryRun = rest.includes('--dry-run');
 
       console.log(
-        `\n  retention: journal ${r.journal_days}d · artifacts ${r.artifact_days}d · runs ${r.run_log_days}d`,
+        `\n  retention: journal ${r.journal_days}d · artifacts ${r.artifact_days}d · runs ${r.run_log_days}d` +
+          ` · rollback stashes ${r.rollback_stash_days}d`,
       );
 
       const out = prune(r, { dryRun });
-      if (!out.enabled) {
+      const stashesOn = r.rollback_stash_days > 0;
+      if (!out.enabled && !stashesOn) {
         console.log('  every window is 0 — keeping everything. Set one in config/system.yaml.\n');
         return;
       }
 
-      for (const e of out.removed) {
-        console.log(`  ${dryRun ? 'would remove' : 'removed'}  ${e.day}  ${e.area.padEnd(9)} ${formatBytes(e.bytes).padStart(9)}  ${e.path}`);
+      if (out.enabled) {
+        for (const e of out.removed) {
+          console.log(`  ${dryRun ? 'would remove' : 'removed'}  ${e.day}  ${e.area.padEnd(9)} ${formatBytes(e.bytes).padStart(9)}  ${e.path}`);
+        }
+        console.log(
+          `\n  ${out.removed.length} entr(ies) ${dryRun ? 'would be removed' : 'removed'}, ` +
+            `${formatBytes(out.bytes)} ${dryRun ? 'would be reclaimed' : 'reclaimed'}; ${out.kept} kept.`,
+        );
       }
-      console.log(
-        `\n  ${out.removed.length} entr(ies) ${dryRun ? 'would be removed' : 'removed'}, ` +
-          `${formatBytes(out.bytes)} ${dryRun ? 'would be reclaimed' : 'reclaimed'}; ${out.kept} kept.`,
-      );
+
+      if (stashesOn) {
+        /*
+         * Not while a run is in flight. A run pushes a stash for every rejected
+         * task, every push shifts every older stash down one position, and
+         * `git stash drop` takes a position. dropStashBySha re-resolves from the
+         * SHA right before each drop, which leaves a window of one git call —
+         * this closes it. The stashes are still there next time.
+         */
+        const holder = liveLockHolder();
+        if (holder !== null) {
+          console.log(
+            `\n  rollback stashes: left alone — ` +
+              (holder === -1
+                ? 'state/run.lock is there but unreadable. `sa unlock` if no run is going.'
+                : `a run is in flight (pid ${holder}).`),
+          );
+        } else {
+          const st = await pruneRollbackStashes(cfg.repos, r.rollback_stash_days, { dryRun });
+          if (st.removed.length) console.log('');
+          for (const e of st.removed) {
+            console.log(
+              `  ${dryRun ? 'would drop' : 'dropped'}  ${e.day}  ${e.repo}  ${e.sha}  ${e.label.slice(0, 50)}`,
+            );
+          }
+          console.log(
+            `\n  ${st.removed.length} rollback stash(es) ${dryRun ? 'would be dropped' : 'dropped'}; ` +
+              `${st.kept} kept.`,
+          );
+          // The SHA printed above is the only way back. Say how to use it.
+          if (st.removed.length && !dryRun) {
+            console.log('  Get one back with:  git -C <project> stash apply <sha>  (until git gc).');
+          }
+          for (const err of st.errors) log.warn(`  prune: ${err}`);
+        }
+      }
+
       if (dryRun) console.log('  --dry-run: nothing was deleted.');
       for (const err of out.errors) log.warn(`  prune: ${err}`);
       console.log('');
