@@ -1,10 +1,49 @@
 # ShanAuto
 
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Node](https://img.shields.io/badge/node-%3E%3D22.5-brightgreen.svg)](package.json)
+[![Platform](https://img.shields.io/badge/platform-Windows-lightgrey.svg)](#what-you-need)
+
 Ideas in, verified commits out. You dump a paragraph; the system turns it into
 commit-sized tasks, has a coding agent implement them one at a time, refuses to
 commit anything that doesn't build, and pushes what survives.
 
 Runs unattended on a normal Windows PC. No paid services, no local LLM, no Docker.
+
+### What it is
+
+An orchestrator for AI coding agents that you point at your own projects. You
+write what you want in plain English in `ideas/inbox.md`. A planning model breaks
+it into small, complete tasks and stores them in a local SQLite ledger. Each task
+goes to a coding agent — [agy](https://antigravity.google) or
+[opencode](https://opencode.ai), chosen by how big the job is — and the result is
+committed **only** if the target repo's own typecheck and test suite pass. Work
+that fails is rolled back without touching anything you had in progress, and
+retried or set aside with the reason written down.
+
+It does not write code itself, and it does not trust the code that is written for
+it. The planner, the router and the agents are all swappable; the gate is not.
+
+### What you need
+
+- **Windows 10 or 11.** The scheduler and the permission scripts are PowerShell.
+- **Node.js 22.5 or later.** It uses the built-in `node:sqlite`.
+- **git**, and optionally the [GitHub CLI](https://cli.github.com) (`gh`) for
+  creating repos and checking that pushed commits were counted.
+- **At least one coding agent CLI:** `agy` or `opencode`. Free tiers are enough
+  for modest volume — see [Free-tier reality](#free-tier-reality--read-this-before-raising-daily_target).
+
+### Status
+
+Built for, and run by, one person. It works, it is heavily tested (about 1,900
+tests), and it is Windows-first: expect to read the config files rather than
+click through a setup wizard. `docs/DECISIONS.md` records why it is the way it
+is, including the many things that went wrong first.
+
+> **It commits to your repositories while nobody is watching.** The gate, the
+> repo allowlist and the rollback are careful, and they are not a guarantee.
+> Read [Containment vs. quality control](#containment-vs-quality-control) before
+> pointing it at anything you could not afford to lose.
 
 ---
 
@@ -17,7 +56,7 @@ ideas/inbox.md ──► brain (agy) ──► epics ──► milestones ──
                               ▼
                        allocator picks today's batch (weighted across repos)
                               ▼
-                       agent (agy/copilot/opencode) implements ONE task
+                       agent (agy/opencode) implements ONE task
                               ▼
                        ┌──── THE GATE ────────────────────────┐
                        │ • files changed > 0                  │
@@ -206,7 +245,7 @@ Same for `chat.active`, `agents.registry`, and `routing`. No other code changes.
 
 ### How work is split between agents
 
-Heavy work goes to `agy`/`copilot`, small edits to `opencode`. A task is **complex** if any
+Heavy work goes to `agy`, small edits to `opencode`. A task is **complex** if any
 one of these holds — configurable under `routing.complexity`:
 
 - its kind is `feature`, `refactor` or `bugfix`
