@@ -862,7 +862,7 @@ export const remoteQuestion = {
     'and will not appear on your GitHub profile.',
   ],
   /*
-   * Opens on Yes. This is an "Autonomous daily GitHub contribution system", and
+   * Opens on Yes. This system exists to push what survives the gate, and
    * a project that never leaves this computer is not a safer version of that —
    * it is a failure of it, and it fails silently: every run succeeds, every
    * commit lands, and none of the work appears on the profile it was for.

@@ -207,8 +207,9 @@ export async function scaffold(
  *
  * Measured 2026-08-27: example-ledger, 8 commits of ShanAuto's own work, and
  * example-receipts, 7, sitting on one machine with nowhere to go. This is the whole
- * distance between "autonomous project builder" and the first line of
- * package.json, "Autonomous daily GitHub contribution system".
+ * distance between building the work and the README's first promise, that
+ * the system "pushes what survives": a project with no remote has nowhere to
+ * push it.
  *
  * Refuses a project that already has one. Re-pointing `origin` at a new empty
  * repository is how work stops arriving where somebody is looking for it, and

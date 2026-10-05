@@ -5,7 +5,7 @@
   "//private": "Not an npm package. Kept true so `npm publish` can never fire by accident; it says nothing about the source licence, which is MIT above.",
   "private": true,
   "type": "module",
-  "description": "Autonomous daily GitHub contribution system: ideas -> micro-tasks -> verified commits",
+  "description": "Ideas in, verified commits out: an autonomous agent that turns a paragraph into commit-sized tasks, implements them one at a time, and refuses to commit anything that does not build.",
   "engines": {
     "node": ">=22.5.0"
   },

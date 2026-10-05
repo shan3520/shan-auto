@@ -410,10 +410,9 @@ async function newProject(rest: string[]): Promise<void> {
    *
    * It was the other way round until 2026-08-27, on the reasoning that creating
    * a repository publishes something under the owner's name. That is true, and
-   * it still made the wrong thing the default: the first line of package.json
-   * calls this an "Autonomous daily GitHub contribution system", and a project
-   * born with nowhere to contribute is that system failing silently at the one
-   * thing it is named for. example-ledger reached 8 commits of its own work and
+   * it still made the wrong thing the default: the README promises that this
+   * system "pushes what survives", and a project born with nowhere to push is
+   * that system failing silently at the one thing it promises. example-ledger reached 8 commits of its own work and
    * example-receipts 7, all of it on a single disk, because this flag went unpassed
    * twice.
    *

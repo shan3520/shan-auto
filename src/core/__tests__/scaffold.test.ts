@@ -480,7 +480,7 @@ describe('tightening a gate that has been outgrown', () => {
  *
  * The cost, measured: example-ledger held 8 commits of ShanAuto's own work and
  * example-receipts 7, none of it anywhere but one hard disk - against a project whose
- * package.json calls it an "Autonomous daily GitHub contribution system".
+ * README promises that it "pushes what survives".
  */
 describe('publishing a project that already exists', () => {
   it('refuses a folder that is not a git repository', async () => {
@@ -546,8 +546,8 @@ describe('publishing a project that already exists', () => {
  *
  * `--github` was opt-in, on the reasoning that creating a repository publishes
  * something under the owner's name. True, and it still made the wrong thing the
- * default for a program whose package.json describes it as an "Autonomous daily
- * GitHub contribution system". Two projects — 8 commits and 7 — were built to a
+ * default for a program whose README promises that it "pushes what
+ * survives". Two projects — 8 commits and 7 — were built to a
  * working state and stranded on one disk because the flag went unpassed.
  *
  * Read off the source rather than run, because exercising it would create a

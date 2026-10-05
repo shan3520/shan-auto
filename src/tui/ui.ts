@@ -297,7 +297,7 @@ export async function menu(
  * `defaultYes` is for the exceptions, and there is currently one kind: a
  * question where the cautious-looking answer is the one that quietly breaks
  * what the operator asked for. "Also create it on GitHub?" is that question.
- * This is an "Autonomous daily GitHub contribution system"; a project that
+ * This system exists to push what survives the gate; a project that
  * never leaves this computer is not a safer version of that, it is a failure
  * of it, and it fails SILENTLY — nothing is wrong until days of work turn out
  * to be invisible on the profile they were for.
