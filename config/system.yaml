@@ -1,0 +1,116 @@
+# Global system behaviour. Everything here is hot-reloaded on each run.
+
+# Drain mode (2026-08-07) is over — these are back to normal values.
+#
+# "Human-paced" is no longer one of the things they are. The 60-300s pause
+# between commits was removed on 2026-10-04 (see README, "Pacing"): the two
+# ceilings below bound WHAT gets committed, and nothing now bounds when.
+daily_target: 30          # tasks to land per day
+max_daily_commits: 40     # HARD ceiling. A bug can never exceed this.
+overselect: 6             # extra tasks queued beyond target, to absorb failures
+
+work_hours:
+  # Opened to the full day on 2026-08-07, at the owner's request, so a run
+  # started late at night is not cut off three minutes later — and so a run can
+  # continue past midnight, which the window itself cannot express.
+  start: "00:00"          # commits are only ever pushed inside this window
+  end: "23:59"            # note: the check does NOT handle a window crossing
+                          # midnight - keep end later than start, max "23:59"
+
+timeouts:
+  task_s: 900             # hard kill for one agent execution
+  verify_s: 300
+  # Raised from 240 on 2026-08-07. A real decompose prompt is ~11KB, and the
+  # stronger models take 145-185s to answer it — close enough to 240 that a
+  # slightly larger prompt would have started timing out, and a timeout costs a
+  # provider request AND produces nothing.
+  brain_s: 420
+
+limits:
+  # The FLOOR, not the budget. Past this the executor keeps going for as long
+  # as each attempt fails in a NEW way (see keepTrying), up to a hard ceiling.
+  max_attempts: 4
+  max_files_per_task: 4
+  min_insertions: 3       # below this, the diff is 'trivial' and gets rolled back
+  scope_blowout_multiplier: 2
+  max_run_hours: 8
+  # Reject a commit that adds an export nothing calls. On 2026-08-06 two thirds
+  # of agent commits were working, tested code that no production path invoked;
+  # the gate passed them because dead code compiles. Mark a deliberate one
+  # `@public` on the line above to opt out.
+  forbid_dead_exports: true
+
+backlog:
+  # Below this, auto-trigger a planning pass. Lowered from 90 alongside
+  # tasks_per_milestone: a task is now a complete change rather than a fragment,
+  # so 30 of them is comparable work to the old 90. Left at 90 it would have
+  # triggered a planning pass almost every run, burning quota on the brain.
+  min_ready: 30
+  # Lowered from [12, 25] on 2026-08-07. That range was the structural cause of
+  # the dead-code problem: there is no way to get 12 tasks out of one coherent
+  # change except by splitting it into layers — "add the helper", "test the
+  # helper", "wire the helper" — and a layer that lands alone is dead code the
+  # gate rejects. Fewer, complete tasks commit at a HIGHER rate, because each
+  # one passes on its own. Throughput now comes from more ideas, not from
+  # cutting the same idea more finely.
+  #
+  # Floor lowered from 3 to 1 on 2026-08-21. The 2026-08-07 change above was
+  # only half applied: the range's TOP came down but its BOTTOM did not, so the
+  # planner kept being told to produce at least three tasks from a milestone the
+  # same file argues should often be one. Ten consecutive milestones came back
+  # with exactly one task each — six on 2026-08-20, one in run 13, three in run
+  # 14 — and every one was warned about. A number handed to the model alongside
+  # decompose.md's "NEVER pad to reach the number" is a contradiction, and the
+  # model was resolving it correctly. The top of the range still means what it
+  # says: a milestone needing more than ten complete changes is too big.
+  tasks_per_milestone: [1, 10]
+
+brain:
+  # Measured on this machine, 2026-08-06 (see README "Free-tier reality"):
+  #   gemini-3.1-flash-lite  works with tools, sane quota   <- use this
+  #   gemini-3.6-flash       free tier is 20 requests/DAY   <- unusable for volume
+  #   gemini-2.5-*           retired for new users
+  #   groq/*                 8k TPM, opencode's preamble is ~38k -> never fits
+  model: google/gemini-3.1-flash-lite
+  fallback_model: google/gemini-3.6-flash
+  max_repair_attempts: 2
+
+budget:
+  # Soft daily ceiling on agent spend, in whatever unit the provider counts.
+  # Copilot reports "premium requests" and bills them fractionally (0.33 and 1
+  # are both real observed values); agy and opencode report nothing, so their
+  # dispatches are counted as unmeasured rather than as free.
+  #
+  # 0 means unlimited, and unlimited is the default. Exceeding this only ever
+  # produces a warning — it does not stop a run, and it never blocks a commit.
+  daily_agent_units: 0
+
+notify:
+  on_run_complete: true
+  on_failure: true
+
+# How long `sa prune` keeps the gitignored working record. Days; 0 = forever.
+#
+# 0 everywhere is the shipped default and means NOTHING IS EVER DELETED, which
+# is the behaviour this system had until 2026-08-08. One night of real work left
+# 8.5 MB in data/artifacts/ and nothing removes it, so the option exists — but
+# the caps above were removed on purpose to keep the full record, and deleting it
+# has to be an explicit choice, not a default someone inherits.
+#
+# Nothing here can reach data/shanauto.db or data/memory/*.jsonl. Those are the
+# durable memory; prune refuses them regardless of what is written below.
+#
+# Run `sa prune --dry-run` first. It reports exactly what would go, and removes
+# nothing.
+retention:
+  # Windows chosen 2026-08-08, when `sa prune` was put on the schedule. Zero
+  # everywhere meant retention existed and did nothing, which is the same as not
+  # having it — one night alone produced 8.5 MB of artifacts.
+  #
+  # Nothing here is the only copy. Journal days are ingested into the ledger
+  # before they age out, run outcomes likewise, and artifacts are the raw stream
+  # whose readable form is already in the journal. The database and
+  # data/memory/*.jsonl are never touched by prune at all.
+  journal_days: 90        # data/journal/YYYY-MM-DD.md — ingested into memory first
+  artifact_days: 30       # data/artifacts/<runId>/ — raw agent + brain output, the bulk of it
+  run_log_days: 90        # data/runs/YYYY-MM-DD.jsonl — structured log lines

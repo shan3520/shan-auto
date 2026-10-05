@@ -1,0 +1,40 @@
+{
+  "name": "shanauto",
+  "version": "0.1.0",
+  "license": "MIT",
+  "//private": "Not an npm package. Kept true so `npm publish` can never fire by accident; it says nothing about the source licence, which is MIT above.",
+  "private": true,
+  "type": "module",
+  "description": "Autonomous daily GitHub contribution system: ideas -> micro-tasks -> verified commits",
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "scripts": {
+    "sa": "tsx src/index.ts",
+    "doctor": "tsx src/index.ts doctor",
+    "plan": "tsx src/index.ts plan",
+    "run": "tsx src/index.ts run",
+    "status": "tsx src/index.ts status",
+    "report": "tsx src/index.ts report",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "agy:status": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/agy-access.ps1 -Status",
+    "agy:grant": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/agy-access.ps1 -Apply",
+    "agy:nuke": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/agy-access.ps1 -Revert",
+    "tui": "tsx src/index.ts tui"
+  },
+  "dependencies": {
+    "execa": "^9.5.2",
+    "simple-git": "^3.27.0",
+    "strip-ansi": "^7.1.0",
+    "yaml": "^2.7.0",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "playwright": "^1.49.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3",
+    "vitest": "^4.1.10"
+  }
+}

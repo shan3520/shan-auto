@@ -1,0 +1,155 @@
+# THE SWAP-A-TOOL FILE.
+# Changing which tool the system uses = change `active`, restart. Nothing else.
+
+brain:
+  # The autonomous planner. Turns ideas into micro-tasks. Runs unattended.
+  # `agy` and `opencode` authenticate against DIFFERENT quotas, so if one is
+  # exhausted for the day, switching `active` to the other keeps you running.
+  #
+  # agy, on a strong model. Planning is the hardest reasoning in this system —
+  # the agents are told exactly what to do, the brain has to work out what the
+  # work even is — and it is also the cheapest place to spend: a handful of
+  # calls a day against dozens for the agents.
+  #
+  # Model ids below are agy's own (`agy models`), NOT opencode's. They are not
+  # interchangeable, which is why the fallback lives here per driver rather than
+  # in system.yaml.
+  active: agy
+  registry:
+    opencode:
+      module: ./drivers/brain.opencode.js
+      model: google/gemini-3.1-flash-lite
+      fallback_model: google/gemini-3.6-flash
+    agy:
+      module: ./drivers/brain.agy.js
+      # bin defaults to %LOCALAPPDATA%\agy\bin\agy.exe
+      #
+      # Measured on the REAL decompose prompt (~11KB), 2026-08-07, via
+      # scripts/probe-decompose.ts. A toy prompt tells you nothing here:
+      #
+      #   gemini-3.1-pro-high        1 call   153s   13 valid tasks   <- use this
+      #   claude-opus-4-6-thinking   4 calls  502s   3 failures, fell back
+      #   claude-sonnet-4-6          4 calls  437s   3 failures, fell back
+      #
+      # Both Claude models take >240s on a prompt this size and then return
+      # prose or nothing. A "thinking" model is actively wrong for this job: the
+      # contract is ONLY a fenced json block, and reasoning breaks it. Quota is
+      # the binding constraint, so one reliable call beats four clever ones.
+      model: gemini-3.1-pro-high
+      # Faster and weaker, on the same family but a different tier — for when
+      # pro-high is rate-limited rather than when it is wrong.
+      fallback_model: gemini-3.6-flash-high
+
+chat:
+  # OPTIONAL human-input channel. You type ideas here; the system reads them out.
+  # The autonomous loop runs fine with this disabled - see README "Why chat is optional".
+  active: chatgpt
+  enabled: false
+  registry:
+    chatgpt:
+      module: ./drivers/chat.chatgpt.js
+      url: https://chatgpt.com
+      profile_dir: ./data/browser-profile
+      headless: false
+
+agents:
+  # The hands. These actually write code.
+  registry:
+    opencode:
+      module: ./drivers/agent.opencode.js
+      kind: cli
+      # Chosen on measurement, not on name. Eight free models were given one
+      # identical XML brief against a real repo; each model's own tests were then
+      # mutation-tested (window / polarity / zero-guard / ratio-inversion) and
+      # cross-checked against an independent implementation of the same spec.
+      # big-pickle was the only model to catch all four mutations AND have all 13
+      # of its tests pass against the independent implementation - i.e. its tests
+      # are a specification, not a mirror of its own code. Runner-up (manual
+      # swap only - agents have no fallback_model wiring): opencode/mimo-v2.5-free.
+      # See docs/DECISIONS.md.
+      model: opencode/big-pickle
+      bin: opencode
+    agy:
+      # Antigravity's real CLI. Fully autonomous - writes files, exits cleanly.
+      module: ./drivers/agent.agy.js
+      kind: cli
+      # bin defaults to %LOCALAPPDATA%\agy\bin\agy.exe
+      model: ''
+      # MUTUALLY EXCLUSIVE with running shell commands. In sandbox mode a terminal
+      # command additionally requires `escalate_admin`, which headless mode cannot
+      # prompt for, so every command is denied. You get the sandbox OR commands.
+      #
+      # Currently OFF because command access was granted (docs/DECISIONS.md).
+      # Protection is the default-deny allow-list in agy's settings.json.
+      # scripts/agy-access.ps1 flips this automatically both ways.
+      # The driver enforces the non-negotiable deny set (agent.agy.ts): an
+      # unsandboxed agy refuses to run when its settings.json is missing any of
+      # them, so a degraded allow-list cannot silently pass.
+      sandbox: false
+      # Auto-approves EVERY tool call including arbitrary shell, and would defeat
+      # the allow-list entirely. Leave OFF - the allow-list is the whole control.
+      skip_permissions: false
+    # GitHub Copilot was removed on 2026-08-15 at the owner's instruction.
+    #
+    # It was here to supply a third independent quota. That quota ran out on
+    # 2026-08-12 and does not reset until 2026-09-01, and while exhausted it
+    # was doing harm rather than nothing: every task routed to it burned a
+    # dispatch and came back QUOTA. On 2026-08-15 all four of the day's jobs
+    # hashed to it and the run ended 38 seconds in with 0 committed.
+    #
+    # The driver, its stream parser and their tests went with it. To bring it
+    # back: restore those from git, re-add this registry entry, and put
+    # `copilot` back in complex_agents below.
+    antigravity:
+      # The IDE launcher. NOT scriptable - parks tasks for you to finish by hand.
+      module: ./drivers/agent.antigravity.js
+      kind: ide
+      bin: C:/Antigravity/bin/antigravity.cmd
+      mode: handoff
+
+routing:
+  # WHO does the work is decided by HOW BIG the job is — never by which project
+  # it belongs to. A worker takes over whatever project its task lands in.
+  #
+  # Both pools are opencode, and that is not an oversight. agy is the SENIOR:
+  # it plans the milestone, authors the XML brief the intern implements, and
+  # reviews the result before it is pushed. It does not write code. opencode is
+  # the intern: it implements the brief and nothing else.
+  #
+  # Splitting the writing between them would break the one thing that makes the
+  # review worth anything — a reviewer marking its own homework is a reviewer
+  # that ships whatever it wrote. It also means agy's quota is spent entirely on
+  # the reasoning steps, which are the ones a weaker model cannot do.
+  #
+  # To put agy back to writing code, add it to `complex_agents`. Its agent
+  # driver, its permission set and its tests are all still here; only the
+  # routing changed.
+  complex_agents: [opencode]
+  simple_agents: [opencode]
+  default: opencode
+
+  complexity:
+    # A task is "complex" if ANY of these is true.
+    min_est_lines: 25
+    min_files: 2
+    complex_kinds: [feature, refactor, bugfix]
+
+  # agy is the senior engineer: it plans and briefs. opencode is the intern:
+  # it implements the brief and nothing else. Listing an agent here swaps the
+  # planner's freeform instruction for the senior's XML brief in its prompt,
+  # and costs one extra brain call per task at dispatch.
+  brief_for: [opencode]
+
+  # Agents whose work the senior reads before it is committed. It runs after
+  # the project's own check has already passed, and answers the one thing that
+  # check cannot: whether the tests that passed are capable of failing.
+  #
+  # Costs one brain call per task that reaches the gate green. A rejection
+  # reverts the change and spends the task's second attempt, so it is bounded
+  # by system.limits.max_attempts, not by the reviewer's patience. Empty this
+  # list to turn reviewing off without touching anything else.
+  qa_for: [opencode]
+
+  rules:
+    # Explicit kind overrides, applied before the size split. Usually empty.
+    []

@@ -1,0 +1,76 @@
+# ALLOWLIST. The system refuses to touch any path not listed here.
+#
+# Copy this file to `config/repos.yaml` and edit it:
+#
+#     cp config/repos.yaml.example config/repos.yaml
+#
+# `repos.yaml` is deliberately NOT tracked by git. It names the absolute paths
+# of your projects on your own disk, which is not something to publish, and a
+# tracked copy is a merge conflict every time you add a project. This example
+# is the tracked one; yours is private to your machine.
+#
+# These are YOUR projects — the things ShanAuto builds for you. Add a project
+# here and the system starts contributing to it; remove it and it stops.
+#
+# `verify_cmd` is the gate for this repo: the command that must exit 0 before
+# anything is committed. A task may add a narrower check on top, never replace it.
+#
+# `weight` does two jobs: it sets the draw order AND each repo's slice of
+# system.max_daily_commits (weight / total weight, rounded up). Add an optional
+# `max_daily_commits:` to pin a repo's slice by hand. Neither can exceed the
+# global ceiling.
+#
+# There is deliberately NO per-repo agent setting. Which worker takes a job is
+# decided by how big the job is (config/drivers.yaml), never by which project it
+# belongs to.
+#
+# NOTE: ShanAuto itself is NOT listed here, and must not be. It is the machine,
+# not the work. It was briefly listed and the agents committed 63 changes into
+# their own orchestrator — which is how a system ends up editing the thing that
+# is running it.
+
+repos:
+  # A Python project with a real test suite. compileall runs first because it is
+  # fast, and a syntax error should not cost ten seconds of pytest imports to
+  # discover; the gate composes both rather than substituting one.
+  - id: example-api
+    path: D:/repos/example-api
+    branch: main
+    stack: python + fastapi
+    verify_cmd: python -m compileall -q -x "(node_modules|[.]venv)" . && python -m pytest -q
+    # What the AGENT may run to check itself before finishing. NOT the gate —
+    # verify_cmd above still decides the commit.
+    #
+    # It exists because the gate's command cannot always be handed to the agent:
+    # agy matches a command token-for-token, with no prefix matching and no
+    # globs, and nothing in its allow-list contains `&&`. So this is the whole
+    # suite in the exact form the allow-list already holds.
+    agent_check_cmd: python -m pytest -q
+    enabled: true
+    weight: 2
+
+  # A greenfield project. A syntax check is the right gate on day one, because
+  # anything stricter fails every task before the project exists — `sa doctor`
+  # watches for the day real tests appear and offers to tighten it.
+  #
+  # verify_cmd must NOT be a script inside the repo: an agent can edit those,
+  # and a gate an agent can edit is not a gate.
+  - id: example-new
+    path: D:/repos/example-new
+    branch: main
+    stack: python
+    verify_cmd: python -m compileall -q -x "(node_modules|[.]venv)" .
+    enabled: true
+    weight: 1
+
+  # A TypeScript project. Point verify_cmd at whatever actually proves the repo
+  # works — a typecheck alone only answers "does this compile", which two real
+  # changes passed while still lying about the database schema and shipping dead
+  # code. See the README, "Why verify_cmd runs tests, not just a typecheck".
+  # - id: example-web
+  #   path: D:/repos/example-web
+  #   branch: main
+  #   stack: typescript
+  #   verify_cmd: npm run typecheck && npm test
+  #   enabled: true
+  #   weight: 1
